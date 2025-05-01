@@ -1,0 +1,21 @@
+
+name: Manual Version Update
+
+on:
+  workflow_dispatch:
+
+jobs:
+  update-version:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Read version from file and update build.gradle
+        run: |
+          VERSION=$(cat version.txt)
+          VERSION_CODE=$(echo $VERSION | awk -F. '{print $3}')
+          sed -i "s/versionCode .*/versionCode $VERSION_CODE/" app/build.gradle
+          sed -i "s/versionName ".*"/versionName "$VERSION"/" app/build.gradle
+          echo "Updated versionCode to $VERSION_CODE and versionName to $VERSION"
