@@ -1,12 +1,15 @@
-name: Android Build
+name: Android Version Check
 
 on:
+  push:
+    branches:
+      - CICD
   release:
     types: [published]
 
 jobs:
-  build:
-    name: Build Signed AAB and APK
+  check-version:
+    name: Check Version Code and Name
     runs-on: ubuntu-latest
 
     steps:
@@ -19,49 +22,42 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Decode keystore file
+      - name: Print existing version from build.gradle.kts
         run: |
-          mkdir -p app
-          echo "${{ secrets.KEYSTORE_FILE }}" | base64 --decode > app/keystore.jks
+          grep "versionCode" app/build.gradle.kts
+          grep "versionName" app/build.gradle.kts
 
-      - name: Set up signing config files
-        run: |
-          echo "${{ secrets.KEYSTORE_PASSWORD }}" > keystore_password.txt
-          echo "${{ secrets.KEY_ALIAS }}" > key_alias.txt
-          echo "${{ secrets.KEY_PASSWORD }}" > key_password.txt
-
-      - name: Update versionCode and versionName from tag
+      - name: Check and save version report
+        if: github.event_name == 'release'
         run: |
           TAG_NAME=${{ github.event.release.tag_name }}
-          VERSION_NAME=${TAG_NAME#v} # remove leading 'v' if present, e.g., v1.2.3 → 1.2.3
-
-          # Convert version name to version code (e.g., 1.2.3 -> 10203)
+          VERSION_NAME=${TAG_NAME#v}
           IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NAME"
           VERSION_CODE=$((MAJOR * 10000 + MINOR * 100 + PATCH))
 
-          sed -i "s/versionCode .*/versionCode $VERSION_CODE/" app/build.gradle.kts
-          sed -i "s/versionName \".*\"/versionName \"$VERSION_NAME\"/" app/build.gradle.kts
+          CURRENT_CODE=$(grep "versionCode" app/build.gradle.kts | awk '{print $2}')
+          CURRENT_NAME=$(grep "versionName" app/build.gradle.kts | cut -d '"' -f2)
 
-          echo "Set versionCode to $VERSION_CODE and versionName to $VERSION_NAME"
+          echo "Current versionCode: $CURRENT_CODE" > version_check.txt
+          echo "Current versionName: $CURRENT_NAME" >> version_check.txt
+          echo "New versionCode: $VERSION_CODE" >> version_check.txt
+          echo "New versionName: $VERSION_NAME" >> version_check.txt
 
-      - name: Grant execute permission to gradlew
-        run: chmod +x ./gradlew
+          if [ "$VERSION_CODE" -le "$CURRENT_CODE" ]; then
+            echo "❌ ERROR: versionCode not incremented" >> version_check.txt
+            exit 1
+          fi
 
-      - name: Build signed release AAB and APK
-        run: ./gradlew bundleRelease assembleRelease
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          if [ "$VERSION_NAME" == "$CURRENT_NAME" ]; then
+            echo "❌ ERROR: versionName not changed" >> version_check.txt
+            exit 1
+          fi
 
-      - name: Upload signed AAB artifact
+          echo "✅ SUCCESS: versionCode and versionName are updated correctly" >> version_check.txt
+
+      - name: Upload version check report
+        if: github.event_name == 'release'
         uses: actions/upload-artifact@v4
         with:
-          name: release-aab
-          path: app/build/outputs/bundle/release/app-release.aab
-
-      - name: Upload signed APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-apk
-          path: app/build/outputs/apk/release/app-release.apk
+          name: version-check-report
+          path: version_check.txt
