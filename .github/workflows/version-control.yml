@@ -3,7 +3,7 @@ name: Android Version Check
 on:
   push:
     branches:
-      - CICD
+      - CICD  
   release:
     types: [published]
 
