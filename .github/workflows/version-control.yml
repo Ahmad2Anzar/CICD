@@ -1,21 +1,67 @@
-
-name: Manual Version Update
+name: Android Build
 
 on:
-  workflow_dispatch:
+  release:
+    types: [published]
 
 jobs:
-  update-version:
+  build:
+    name: Build Signed AAB and APK
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repo
+      - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Read version from file and update build.gradle
+      - name: Set up JDK 17
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Decode keystore file
         run: |
-          VERSION=$(cat version.txt)
-          VERSION_CODE=$(echo $VERSION | awk -F. '{print $3}')
-          sed -i "s/versionCode .*/versionCode $VERSION_CODE/" app/build.gradle
-          sed -i "s/versionName ".*"/versionName "$VERSION"/" app/build.gradle
-          echo "Updated versionCode to $VERSION_CODE and versionName to $VERSION"
+          mkdir -p app
+          echo "${{ secrets.KEYSTORE_FILE }}" | base64 --decode > app/keystore.jks
+
+      - name: Set up signing config files
+        run: |
+          echo "${{ secrets.KEYSTORE_PASSWORD }}" > keystore_password.txt
+          echo "${{ secrets.KEY_ALIAS }}" > key_alias.txt
+          echo "${{ secrets.KEY_PASSWORD }}" > key_password.txt
+
+      - name: Update versionCode and versionName from tag
+        run: |
+          TAG_NAME=${{ github.event.release.tag_name }}
+          VERSION_NAME=${TAG_NAME#v} # remove leading 'v' if present, e.g., v1.2.3 → 1.2.3
+
+          # Convert version name to version code (e.g., 1.2.3 -> 10203)
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION_NAME"
+          VERSION_CODE=$((MAJOR * 10000 + MINOR * 100 + PATCH))
+
+          sed -i "s/versionCode .*/versionCode $VERSION_CODE/" app/build.gradle.kts
+          sed -i "s/versionName \".*\"/versionName \"$VERSION_NAME\"/" app/build.gradle.kts
+
+          echo "Set versionCode to $VERSION_CODE and versionName to $VERSION_NAME"
+
+      - name: Grant execute permission to gradlew
+        run: chmod +x ./gradlew
+
+      - name: Build signed release AAB and APK
+        run: ./gradlew bundleRelease assembleRelease
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+
+      - name: Upload signed AAB artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-aab
+          path: app/build/outputs/bundle/release/app-release.aab
+
+      - name: Upload signed APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-apk
+          path: app/build/outputs/apk/release/app-release.apk
